@@ -65,6 +65,13 @@ def find_sharp_exe():
     path = os.path.join(base, "envs", CONDA_ENV_NAME, "Scripts", "sharp.exe")
     return path if os.path.exists(path) else None
 
+def find_3dgsconverter_exe():
+    base = find_conda_base()
+    if not base:
+        return None
+    path = os.path.join(base, "envs", CONDA_ENV_NAME, "Scripts", "3dgsconverter.exe")
+    return path if os.path.exists(path) else None
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PLY transformation  (no PyTorch – bundled plyfile + numpy are enough)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -307,27 +314,31 @@ class App(tk.Tk):
             viewer_file = ply  # fallback
             self._set_status("Step 3/3  –  Converting to SPZ…")
             self._log("   Converting PLY to SPZ format…")
-            try:
-                conv_cmd = ["3dgsconverter", "-i", ply, "-f", "spz", "--force"]
-                conv_proc = subprocess.Popen(
-                    conv_cmd,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, encoding="utf-8", errors="replace",
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                for line in conv_proc.stdout:
-                    stripped = line.rstrip()
-                    if stripped:
-                        self._log("   " + stripped)
-                conv_proc.wait()
-                if conv_proc.returncode == 0 and os.path.exists(spz):
-                    os.remove(ply)
-                    viewer_file = spz
-                    self._log(f"✓  SPZ ready: {spz}", "ok")
-                else:
-                    self._log("⚠  SPZ conversion failed, using PLY instead", "warn")
-            except FileNotFoundError:
-                self._log("⚠  3dgsconverter not found, using PLY instead", "warn")
+            converter_exe = find_3dgsconverter_exe()
+            if not converter_exe:
+                self._log("⚠  3dgsconverter not found in conda env, using PLY instead", "warn")
+            else:
+                try:
+                    conv_cmd = [converter_exe, "-i", ply, "-f", "spz", "--force"]
+                    conv_proc = subprocess.Popen(
+                        conv_cmd,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, encoding="utf-8", errors="replace",
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    for line in conv_proc.stdout:
+                        stripped = line.rstrip()
+                        if stripped:
+                            self._log("   " + stripped)
+                    conv_proc.wait()
+                    if os.path.exists(spz):
+                        os.remove(ply)
+                        viewer_file = spz
+                        self._log(f"✓  SPZ ready: {spz}", "ok")
+                    else:
+                        self._log("⚠  SPZ conversion failed, using PLY instead", "warn")
+                except Exception as e:
+                    self._log(f"⚠  SPZ conversion error: {e}, using PLY instead", "warn")
 
             # ── Step 4: Launch splatapult ─────────────────────────────────
             self._set_status("Launching splatapult…")
