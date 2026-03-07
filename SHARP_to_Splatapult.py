@@ -42,19 +42,47 @@ CONDA_ENV_NAME = "sharp"
 def _conda_candidates():
     home  = os.path.expanduser("~")
     local = os.environ.get("LOCALAPPDATA", "")
-    for root in [home, local]:
-        for name in ["anaconda3", "miniconda3", "Anaconda3", "Miniconda3"]:
+    appdata = os.environ.get("APPDATA", "")
+    program_data = os.environ.get("ProgramData", "C:\\ProgramData")
+
+    search_roots = [home, local, appdata, program_data, "C:\\", "D:\\"]
+    names = ["anaconda3", "miniconda3", "Anaconda3", "Miniconda3",
+             "anaconda", "miniconda", "Anaconda", "Miniconda"]
+    for root in search_roots:
+        for name in names:
             yield os.path.join(root, name)
-    # Also try CONDA_PREFIX env var (might be set in activated shells)
+
+    # CONDA_PREFIX env vars set in activated shells
     for var in ("CONDA_PREFIX_1", "CONDA_PREFIX"):
         prefix = os.environ.get(var, "")
         if prefix:
             yield prefix
             yield os.path.dirname(prefix)
 
+    # Ask conda itself — most reliable, works for any install location
+    try:
+        result = subprocess.run(
+            ["conda", "info", "--base"],
+            capture_output=True, text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW, timeout=10
+        )
+        base = result.stdout.strip()
+        if base:
+            yield base
+    except Exception:
+        pass
+
 def find_conda_base():
+    seen = set()
     for base in _conda_candidates():
-        if os.path.exists(os.path.join(base, "condabin", "conda.bat")):
+        base = os.path.normpath(base)
+        if base in seen or not os.path.isdir(base):
+            continue
+        seen.add(base)
+        # Accept if condabin\conda.bat OR Scripts\conda.exe exists (handles all install types)
+        if (os.path.exists(os.path.join(base, "condabin", "conda.bat")) or
+                os.path.exists(os.path.join(base, "Scripts", "conda.exe")) or
+                os.path.exists(os.path.join(base, "bin", "conda"))):
             return base
     return None
 
@@ -153,12 +181,19 @@ class App(tk.Tk):
             self._log("   Place the 'splatapult' folder next to this exe.", "dim")
             ok = False
 
+        conda_base = find_conda_base()
         sharp = find_sharp_exe()
         if sharp:
-            self._log(f"✓  SHARP conda env found", "ok")
+            self._log(f"✓  SHARP conda env found  ({conda_base})", "ok")
         else:
-            self._log(f"⚠  Conda env '{CONDA_ENV_NAME}' not found.", "err")
-            self._log("   Run  Setup_NewPC.bat  to install SHARP.", "dim")
+            if conda_base:
+                self._log(f"⚠  Conda found at {conda_base}", "warn")
+                self._log(f"   but env '{CONDA_ENV_NAME}' is missing inside it.", "err")
+                self._log("   Run  Setup_NewPC.bat  to create the sharp env.", "dim")
+            else:
+                self._log("⚠  Conda/Anaconda/Miniconda not found on this PC.", "err")
+                self._log("   Install Anaconda or Miniconda, then run Setup_NewPC.bat.", "dim")
+                self._log("   https://www.anaconda.com/download", "dim")
             ok = False
 
         if ok:
