@@ -1,0 +1,32 @@
+# ── Build outputs ─────────────────────────────────────────────────────────────
+build/
+dist/
+bin64/
+*.spec.bak
+build_log.txt
+
+# ── Subrepositories (managed separately) ──────────────────────────────────────
+splatapult/
+ml-sharp/
+
+# ── Test / scratch files ──────────────────────────────────────────────────────
+Testfiles/
+*.ply
+*.spz
+inspect_ply.py
+
+# ── Dev / internal docs ───────────────────────────────────────────────────────
+NOTES.md
+PR_spz_support/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# ── Windows ───────────────────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
