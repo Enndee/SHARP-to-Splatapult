@@ -8,9 +8,10 @@ echo.
 echo This script will:
 echo   1. Verify conda and git are installed
 echo   2. Create the 'sharp' conda environment (Python 3.13)
-echo   3. Install ml-sharp (Apple's 3D Gaussian Splatting model)
-echo   4. Install PyTorch with CUDA 12.8 (for NVIDIA GPUs)
-echo   5. Create a Send To shortcut for easy use
+echo   3. Install PyTorch with CUDA 12.8 (MUST be before ml-sharp)
+echo   4. Install ml-sharp (Apple's 3D Gaussian Splatting model)
+echo   5. Install 3dgsconverter (PLY to SPZ compression)
+echo   6. Create a Send To shortcut for easy use
 echo.
 echo Press any key to continue, or Ctrl+C to cancel.
 pause >nul
@@ -65,9 +66,36 @@ if errorlevel 1 (
 )
 
 :install_sharp
+REM ── Install PyTorch with CUDA FIRST ───────────────────────────────────────
+REM    IMPORTANT: This must happen before ml-sharp, otherwise pip will install
+REM    the CPU-only version of PyTorch as a dependency of ml-sharp, and
+REM    SHARP will fail with "Torch not compiled with CUDA enabled".
+echo.
+echo [3/6] Installing PyTorch with CUDA 12.8 support...
+echo       (Required for NVIDIA RTX 20/30/40/50 series GPUs)
+echo       This may take a few minutes...
+conda run -n sharp pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+if errorlevel 1 (
+    echo.
+    echo WARNING: PyTorch CUDA install failed.
+    echo          Trying CPU-only version as fallback...
+    conda run -n sharp pip install torch torchvision
+    if errorlevel 1 (
+        echo ERROR: Could not install PyTorch at all.
+        pause
+        exit /b 1
+    )
+    echo       WARNING: CPU-only PyTorch installed. Conversions will be slow.
+) else (
+    echo       OK - PyTorch with CUDA installed.
+)
+
 REM ── Install ml-sharp ──────────────────────────────────────────────────────
 echo.
-echo [4/5] Installing ml-sharp from GitHub (this may take several minutes)...
+echo [4/6] Installing ml-sharp from GitHub...
+echo       Step 1: Cloning repository (this may take 1-2 minutes, please wait)...
+echo       Step 2: Installing dependencies (another 1-2 minutes)...
+echo       If it appears stuck after the git clone line, it is still working!
 conda run -n sharp pip install "git+https://github.com/apple/ml-sharp.git"
 if errorlevel 1 (
     echo.
@@ -76,27 +104,21 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+echo       OK - ml-sharp installed.
 
+REM ── Install 3dgsconverter ─────────────────────────────────────────────────
 echo.
-echo       Installing PyTorch with CUDA 12.8 support...
-echo       (Required for NVIDIA RTX 20/30/40/50 series GPUs)
-conda run -n sharp pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-if errorlevel 1 (
-    echo.
-    echo WARNING: PyTorch CUDA install failed.
-    echo          You can still use CPU mode (much slower).
-)
-
-echo.
-echo       Installing 3dgsconverter (PLY to SPZ conversion)...
+echo [5/6] Installing 3dgsconverter (PLY to SPZ conversion)...
 conda run -n sharp pip install "git+https://github.com/francescofugazzi/3dgsconverter.git"
 if errorlevel 1 (
-    echo WARNING: 3dgsconverter install failed. SPZ conversion will be skipped.
+    echo WARNING: 3dgsconverter install failed. SPZ compression will be skipped.
+) else (
+    echo       OK - 3dgsconverter installed.
 )
 
 REM ── Create Send To shortcut ───────────────────────────────────────────────
 echo.
-echo [5/5] Creating Send To shortcut...
+echo [6/6] Creating Send To shortcut...
 set "EXE_PATH=%~dp0SHARP_to_Splatapult.exe"
 powershell -NoProfile -Command ^
     "$ws = New-Object -ComObject WScript.Shell; " ^
