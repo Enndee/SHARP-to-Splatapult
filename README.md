@@ -4,6 +4,12 @@
 
 SHARP → Splatapult chains Apple's [SHARP](https://github.com/apple/ml-sharp) model with the [splatapult](https://github.com/hyperlogic/splatapult) viewer so you can go from a JPEG to a fully interactive 3D Gaussian Splat without touching the command line.
 
+
+
+
+https://github.com/user-attachments/assets/d6374ab6-0c8c-4cc0-8af5-9e457b934254
+
+
 <img width="3322" height="1776" alt="grafik" src="https://github.com/user-attachments/assets/a56ce94a-1e2d-4e79-adeb-67950933ff4a" />
 
 
