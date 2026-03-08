@@ -3,9 +3,11 @@ build/
 dist/
 bin64/
 *.spec.bak
-build_log.txt
+# ── User settings (machine-specific, auto-generated) ──────────────────────────
+sharp_to_splatapult_settings.json
 
-# ── Subrepositories (managed separately) ──────────────────────────────────────
+# ── Test / scratch files ──────────────────────────────────────────────────────
+Testfiles/
 splatapult/
 ml-sharp/
 

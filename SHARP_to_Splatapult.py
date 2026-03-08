@@ -15,6 +15,7 @@ if getattr(sys, "frozen", False):
     os.environ["TCL_LIBRARY"] = os.path.join(_mp, "tcl")
     os.environ["TK_LIBRARY"]  = os.path.join(_mp, "tk")
 
+import json
 import subprocess
 import threading
 import time
@@ -32,8 +33,9 @@ else:
     EXE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SPLATAPULT_DIR = os.path.join(EXE_DIR, "splatapult")
-SPLATAPULT_EXE = os.path.join(SPLATAPULT_DIR, "splatapult.exe")
+SPLATAPULT_EXE = os.path.join(SPLATAPULT_DIR, "build", "Release", "splatapult.exe")
 CONDA_ENV_NAME = "sharp"
+SETTINGS_PATH  = os.path.join(EXE_DIR, "sharp_to_splatapult_settings.json")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Conda / SHARP discovery
@@ -135,6 +137,31 @@ def replace_file(src, dst):
                 raise
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Settings persistence
+# ─────────────────────────────────────────────────────────────────────────────
+
+def load_settings():
+    try:
+        with open(SETTINGS_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_settings(updates):
+    """Merge *updates* into the on-disk settings file."""
+    try:
+        try:
+            with open(SETTINGS_PATH, "r") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+        data.update(updates)
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GUI colours
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -163,6 +190,14 @@ class App(tk.Tk):
 
         self._running  = False
         self._device   = tk.StringVar(value="cuda")
+        _s = load_settings()
+        self._export_fmt = tk.StringVar(value=_s.get("export_format", "spz"))
+        self._export_fmt.trace_add("write",
+            lambda *_: save_settings({"export_format": self._export_fmt.get()}))
+        default_exe = _s.get("splatapult_exe", SPLATAPULT_EXE)
+        self._splatapult_exe_var = tk.StringVar(value=default_exe)
+        self._splatapult_exe_var.trace_add("write",
+            lambda *_: save_settings({"splatapult_exe": self._splatapult_exe_var.get()}))
 
         self._build_ui()
         self._check_prereqs()
@@ -174,11 +209,12 @@ class App(tk.Tk):
 
     def _check_prereqs(self):
         ok = True
-        if os.path.exists(SPLATAPULT_EXE):
-            self._log("✓  splatapult found", "ok")
+        exe = self._splatapult_exe_var.get()
+        if os.path.exists(exe):
+            self._log(f"✓  splatapult found", "ok")
         else:
-            self._log(f"⚠  splatapult.exe not found: {SPLATAPULT_EXE}", "err")
-            self._log("   Place the 'splatapult' folder next to this exe.", "dim")
+            self._log(f"⚠  splatapult.exe not found: {exe}", "err")
+            self._log("   Use the Browse button to locate splatapult.exe.", "dim")
             ok = False
 
         conda_base = find_conda_base()
@@ -235,6 +271,31 @@ class App(tk.Tk):
                            selectcolor=BG2, activebackground=BG,
                            activeforeground=FG).pack(side=tk.LEFT, padx=8)
 
+        # ── Export format row
+        fmt = tk.Frame(self, bg=BG, pady=2)
+        fmt.pack(fill=tk.X, padx=24)
+        tk.Label(fmt, text="Export:", font=("Segoe UI", 8),
+                 fg=FG_DIM, bg=BG).pack(side=tk.LEFT)
+        for val, lbl in (("spz", "SPZ (compressed)"), ("ply", "PLY (original)")):
+            tk.Radiobutton(fmt, text=lbl, variable=self._export_fmt, value=val,
+                           font=("Segoe UI", 8), fg=FG, bg=BG,
+                           selectcolor=BG2, activebackground=BG,
+                           activeforeground=FG).pack(side=tk.LEFT, padx=8)
+
+        # ── Viewer path row
+        vwr = tk.Frame(self, bg=BG, pady=3)
+        vwr.pack(fill=tk.X, padx=20)
+        tk.Label(vwr, text="Viewer:", font=("Segoe UI", 8),
+                 fg=FG_DIM, bg=BG, width=7, anchor="w").pack(side=tk.LEFT)
+        tk.Entry(vwr, textvariable=self._splatapult_exe_var,
+                 font=("Consolas", 7), bg=BG2, fg=FG,
+                 insertbackground=FG, relief="flat",
+                 bd=4).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        tk.Button(vwr, text="Browse…", font=("Segoe UI", 8),
+                  bg=BG3, fg=FG, activebackground="#444", activeforeground=FG,
+                  relief="flat", bd=0, padx=8,
+                  command=self._browse_splatapult).pack(side=tk.LEFT)
+
         # ── Progress / status bar
         bar = tk.Frame(self, bg=BG)
         bar.pack(fill=tk.X, padx=20, pady=4)
@@ -275,6 +336,32 @@ class App(tk.Tk):
         )
         if path:
             self._start(path)
+
+    def _browse_splatapult(self):
+        path = filedialog.askopenfilename(
+            title="Locate splatapult.exe",
+            filetypes=[("Executable", "*.exe"), ("All files", "*.*")]
+        )
+        if path:
+            self._splatapult_exe_var.set(path)
+            self._log(f"✓  splatapult path updated: {path}", "ok")
+
+    def _ask_splatapult_exe(self):
+        """Ask the user to locate splatapult.exe from the main thread.
+        Returns the chosen path, or empty string if cancelled.
+        Safe to call from a background thread."""
+        result = [""]
+        done   = threading.Event()
+        def _ask():
+            path = filedialog.askopenfilename(
+                title="Locate splatapult.exe",
+                filetypes=[("Executable", "*.exe"), ("All files", "*.*")]
+            )
+            result[0] = path or ""
+            done.set()
+        self.after(0, _ask)
+        done.wait()
+        return result[0]
 
     # ── Pipeline ──────────────────────────────────────────────────────────────
 
@@ -344,43 +431,54 @@ class App(tk.Tk):
             replace_file(tmp, ply)
             self._log(f"✓  PLY ready: {ply}", "ok")
 
-            # ── Step 3: Convert PLY to SPZ ────────────────────────────────
-            spz = os.path.join(out_dir, stem + ".spz")
-            viewer_file = ply  # fallback
-            self._set_status("Step 3/3  –  Converting to SPZ…")
-            self._log("   Converting PLY to SPZ format…")
-            converter_exe = find_3dgsconverter_exe()
-            if not converter_exe:
-                self._log("⚠  3dgsconverter not found in conda env, using PLY instead", "warn")
+            # ── Step 3: Convert PLY to SPZ (optional) ─────────────────────
+            viewer_file = ply
+            if self._export_fmt.get() == "spz":
+                spz = os.path.join(out_dir, stem + ".spz")
+                self._set_status("Step 3/3  –  Converting to SPZ…")
+                self._log("   Converting PLY to SPZ format…")
+                converter_exe = find_3dgsconverter_exe()
+                if not converter_exe:
+                    self._log("⚠  3dgsconverter not found in conda env, using PLY instead", "warn")
+                else:
+                    try:
+                        conv_cmd = [converter_exe, "-i", ply, "-f", "spz", "--force"]
+                        conv_proc = subprocess.Popen(
+                            conv_cmd,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, encoding="utf-8", errors="replace",
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        for line in conv_proc.stdout:
+                            stripped = line.rstrip()
+                            if stripped:
+                                self._log("   " + stripped)
+                        conv_proc.wait()
+                        if os.path.exists(spz):
+                            os.remove(ply)
+                            viewer_file = spz
+                            self._log(f"✓  SPZ ready: {spz}", "ok")
+                        else:
+                            self._log("⚠  SPZ conversion failed, using PLY instead", "warn")
+                    except Exception as e:
+                        self._log(f"⚠  SPZ conversion error: {e}, using PLY instead", "warn")
             else:
-                try:
-                    conv_cmd = [converter_exe, "-i", ply, "-f", "spz", "--force"]
-                    conv_proc = subprocess.Popen(
-                        conv_cmd,
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, encoding="utf-8", errors="replace",
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                    )
-                    for line in conv_proc.stdout:
-                        stripped = line.rstrip()
-                        if stripped:
-                            self._log("   " + stripped)
-                    conv_proc.wait()
-                    if os.path.exists(spz):
-                        os.remove(ply)
-                        viewer_file = spz
-                        self._log(f"✓  SPZ ready: {spz}", "ok")
-                    else:
-                        self._log("⚠  SPZ conversion failed, using PLY instead", "warn")
-                except Exception as e:
-                    self._log(f"⚠  SPZ conversion error: {e}, using PLY instead", "warn")
+                self._log("   SPZ conversion skipped (PLY format selected).", "dim")
 
             # ── Step 4: Launch splatapult ─────────────────────────────────
             self._set_status("Launching splatapult…")
-            if not os.path.exists(SPLATAPULT_EXE):
-                self._log(f"✗  splatapult.exe not found at: {SPLATAPULT_EXE}", "err")
-                return
-            subprocess.Popen([SPLATAPULT_EXE, viewer_file], cwd=SPLATAPULT_DIR)
+            splatapult_exe = self._splatapult_exe_var.get()
+            if not os.path.exists(splatapult_exe):
+                self._log("⚠  splatapult.exe not found – please locate it now…", "warn")
+                splatapult_exe = self._ask_splatapult_exe()
+                if not splatapult_exe:
+                    self._log("✗  Launch cancelled – no splatapult.exe selected.", "err")
+                    self._set_status("Cancelled – splatapult not found")
+                    return
+                self._splatapult_exe_var.set(splatapult_exe)
+                self._log(f"✓  splatapult path saved: {splatapult_exe}", "ok")
+            splatapult_dir = os.path.dirname(splatapult_exe)
+            subprocess.Popen([splatapult_exe, viewer_file], cwd=splatapult_dir)
             self._log("✅  Done!  splatapult is opening.", "ok")
             self._set_status("Done – click to convert another image")
             self.after(0, lambda: self._lbl_file.config(
